@@ -1,0 +1,34 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*.egg-info
+.DS_Store
+
+# Latex aux files
+*.synctex.gz
+*.log
+*.aux
+*.out
+*.dvi
+*.xwm
+*.nav
+*.toc
+*.snm
+comment.cut
+*.fdb_latexmk
+*.fls
+*.blg
+
+.DS_Store
+# Jupyter
+*.ipynb_checkpoints
+
+.idea/
+.vscode/
+
+# omit dataset fornow
+Jodie/
+SocialEvolution/data_prob0.8.pkl
+SocialEvolution/Proximity.csv
+
+COPY/
