@@ -7,7 +7,7 @@ Main structure and data processing refer to: https://github.com/uoguelph-mlrg/LD
 Time Prediction MAE (5 epochs): 16.48 (hrs); Paper: 23.44 (hrs)
 
 ``` shell script
-python train_eval_main.py --data_dir ./Social --dataset social
+python train_eval_main.py --data_dir ./SocialEvolution --dataset social
 ```
 
 **Wikipedia Dataset**: 
