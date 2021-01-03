@@ -30,5 +30,7 @@ comment.cut
 Jodie/
 SocialEvolution/data_prob0.8.pkl
 SocialEvolution/Proximity.csv
-
 COPY/
+
+# omit files
+dataAnalysis.py
