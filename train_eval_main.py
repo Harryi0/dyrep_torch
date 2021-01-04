@@ -18,6 +18,7 @@ from torch import autograd
 from jodie_data_loader import JodieDataset
 from social_data_loader import SocialEvolutionDataset
 from github_data_loader import GithubDataset
+from synthetic_data_loader import SyntheticDataset
 from utils import *
 from dyrep import DyRep
 from tqdm import tqdm
@@ -90,7 +91,7 @@ def test_time_pred(model, reoccur_dict, reoccur_time_true):
     # Time slots with 10 days intervals as in the DyRep paper
     # timeslots = [t.toordinal() for t in test_loader.dataset.TEST_TIMESLOTS]
 
-    total_ae, total_sample_num = 0, 0
+    total_ae, total_sample_num = 0, 0.000001
     # all_res = []
     test_loader.dataset.time_bar = np.zeros((test_loader.dataset.N_nodes, 1)) + test_loader.dataset.FIRST_DATE.timestamp()
     end_date = test_loader.dataset.END_DATE
@@ -141,6 +142,7 @@ def test(model, reoccur_dict, n_test_batches=None):
     n_samples = 0
     # Time slots with 10 days intervals as in the DyRep paper
     timeslots = [t.toordinal() for t in test_loader.dataset.TEST_TIMESLOTS]
+    end_date = test_set.END_DATE
     event_types = list(test_loader.dataset.event_types_num.keys()) #['comm', 'assoc']
     # sort it by k
     for event_t in test_loader.dataset.event_types_num:
@@ -148,7 +150,7 @@ def test(model, reoccur_dict, n_test_batches=None):
 
     ## Com means the communication event type (will not change the network structure)
     event_types += ['Com']
-    total_ae, total_sample_num = 0, 0
+    total_ae, total_sample_num = 0, 0.000001
     mar, hits_10 = {}, {}
     for event_t in event_types:
         mar[event_t] = []
@@ -258,7 +260,7 @@ if __name__ == '__main__':
 
     parser = argparse.ArgumentParser(description='DyRep Model Training Parameters')
 
-    parser.add_argument('--dataset', type=str, default='github', choices=['github', 'social', 'wikipedia', 'reddit' ])
+    parser.add_argument('--dataset', type=str, default='github', choices=['github', 'social', 'wikipedia', 'reddit', 'synthetic'])
     parser.add_argument('--data_dir', type=str, default='./')
     parser.add_argument('--seed', type=int, default=1111, help='random seed')
     parser.add_argument('--hidden_dim', type=int, default=32, help='hidden layer dimension in DyRep')
@@ -300,6 +302,11 @@ if __name__ == '__main__':
         test_set = JodieDataset('test', dataset_name='reddit', data_dir=args.data_dir)
         initial_embeddings = np.random.randn (train_set.N_nodes, args.hidden_dim)
         A_initial = train_set.get_Adjacency()
+    elif args.dataset=='synthetic':
+        train_set = SyntheticDataset('train', dataset_name='hawkes', data_dir=args.data_dir)
+        test_set = SyntheticDataset('test', dataset_name='hawkes', data_dir=args.data_dir)
+        initial_embeddings = np.random.randn (train_set.N_nodes, args.hidden_dim)
+        A_initial = train_set.get_Adjacency()
     else:
         raise NotImplementedError(args.dataset)
 
@@ -315,7 +322,7 @@ if __name__ == '__main__':
 
     model = DyRep(num_nodes=train_set.N_nodes,
                   hidden_dim=args.hidden_dim,
-                  random_state=rnd,
+                  random_state= rnd,
                   first_date=train_set.FIRST_DATE,
                   end_datetime=end_date,
                   num_neg_samples=5,
@@ -375,7 +382,7 @@ if __name__ == '__main__':
                 data_batch[6] = data_batch[6].float().to(args.device)
             output = model(data_batch)
             losses = [-torch.sum(torch.log(output[0]) + 1e-10), torch.sum(output[1])]
-            loss = torch.sum(torch.stack(losses)/args.batch_size)
+            loss = torch.sum(torch.stack(losses))/args.batch_size
             loss.backward()
             # TODO: test the clip value  for model paramters
             nn.utils.clip_grad_value_(model.parameters(), 100)
@@ -397,8 +404,8 @@ if __name__ == '__main__':
         print("Training epoch {}/{}, time per batch {}, total loss {}".format(epoch, args.epochs + 1, time_iter/float(batch_idx+1), total_loss))
 
         print("Testing Start")
-        # result = test_time_pred(model, test_reoccur_dict, test_reoccur_time_true)
-        result = test(model, test_reoccur_dict)
+        result = test_time_pred(model, test_reoccur_dict, test_reoccur_time_true)
+        # result = test(model, test_reoccur_dict)
         print("Test end")
 
         # result = test(model, n_test_batches=None)
