@@ -22,6 +22,10 @@ python train_eval_main.py --data_dir ./Jodie --dataset wikipedia --all_comms Tru
 
 Time Prediction MAE (2 epochs): 28.22 (hrs)
 
+``` shell script
+python train_eval_main.py --data_dir ./Jodie --dataset reddit --all_comms True
+```
+
 **Synthetic Dataset**: Generate from Hawkes process (TPP) with  20 nodes and 10,000 events (all communication) 
 accoding to the method from: 
 [Omi, Takahiro, and Kazuyuki Aihara. "Fully neural network based model for general temporal point processes." Advances in Neural Information Processing Systems. 2019.]
