@@ -97,30 +97,34 @@ class DyRep(torch.nn.Module):
         # for batch update
         batch_embeddings_u, batch_embeddings_v, batch_embeddings_u_neg, batch_embeddings_v_neg = [], [], [], []
 
+        node_degrees = []
+        z_all = []
+
         expected_time = []
 
-        update_node_degrees = []
+        # update_node_degrees = []
 
+        compare_embeddings_u_neg, compare_embeddings_v_neg = [], []
         for it in range(batch_size):
             u_it, v_it, et_it, td_it = u_all[it], v_all[it], event_types[it], time_diff[it]
 
             ### TODO: remove iterate the number of assoc types (assume it to always=1)
 
             ### TODO: [optimize for Jodie] Buffer the z in a list before writing it to self.z might could improve the speed?
-            z_prev = self.z
+            z_prev = self.z if it == 0 else z_all[it - 1]
 
             ## 1. compute intensity lambda based on the most recent node embedding
 
             if self.batch_update:
                 batch_embeddings_u.append(z_prev[u_it])
                 batch_embeddings_v.append(z_prev[v_it])
-                lambda_uv_it = 0
             else:
                 lambda_uv_it = self.compute_intensity_lambda(z_prev[u_it], z_prev[v_it], et_it)
                 lambda_uv.append(lambda_uv_it)
 
             ## 2. compute new node embeddings
             z_new = self.update_node_embedding(z_prev, u_it, v_it, td_it)
+            # if self.batch_update: node_degrees.append(node_degree)
             assert torch.sum(torch.isnan(z_new)) == 0, (torch.sum(torch.isnan(z_new)), z_new, it)
 
             # update_node_degrees.append(update_node_degree)
@@ -131,32 +135,53 @@ class DyRep(torch.nn.Module):
                 ### update the global node degree
                 for j in [u_it, v_it]:
                     for at in range(self.n_assoc_types):
+                        # self code
                         self.node_degree_global[at][j] = torch.sum(self.A[j, :, at]>0).item()
+                        # self.node_degree_global[at][j] = node_degree[j][at]
 
             ## 4. compute lambda for sampled events that do not happen -> to compute survival probability in loss
+            # uv_others = self.random_state.choice(np.delete(np.arange(self.num_nodes), [u_it, v_it]),
+            #                        size=self.num_neg_samples * 2, replace=False)
+            # for q in range(self.num_neg_samples):
+            #     assert u_it != uv_others[q], (u_it, uv_others[q])
+            #     assert v_it != uv_others[self.num_neg_samples + q], (v_it, uv_others[self.num_neg_samples + q])
+            #     if self.batch_update:
+            #         batch_embeddings_u_neg.extend([z_prev[u_it], z_prev[uv_others[self.num_neg_samples + q]]])
+            #         batch_embeddings_v_neg.extend([z_prev[uv_others[q]], z_prev[v_it]])
+
+            # #######self code
             u_all_node, v_all_node = np.unique(u_all), np.unique(v_all)
             u_it_idx, v_it_idx = np.where(u_all_node==u_it), np.where(v_all_node==v_it)
 
-            u_neg = self.random_state.choice(np.delete(u_all_node, u_it_idx), size=self.num_neg_samples,
-                                             replace=(len(u_all_node)-1<self.num_neg_samples))
+            batch_nodes = np.union1d(np.delete(u_all_node, u_it_idx), np.delete(v_all_node, v_it_idx))
+            batch_uv_neg = self.random_state.choice(batch_nodes, size=self.num_neg_samples * 2,
+                                                    replace=len(batch_nodes)<2*self.num_neg_samples)
+            batch_u_neg, batch_v_neg = batch_uv_neg[self.num_neg_samples:], batch_uv_neg[:self.num_neg_samples]
+            # batch_embeddings_u_neg.append(torch.cat((z_prev[u_it].expand(self.num_neg_samples, -1),
+            #                                          z_prev[batch_u_neg]), dim=0))
+            # batch_embeddings_v_neg.append(torch.cat([z_prev[batch_v_neg], z_prev[v_it].expand(self.num_neg_samples, -1)], dim=0))
 
-            v_neg = self.random_state.choice(np.delete(v_all_node, v_it_idx), size=self.num_neg_samples,
-                                             replace=(len(v_all_node)-1<self.num_neg_samples))
+            # uv_neg = self.random_state.choice(np.delete(np.arange(self.num_nodes), [u_it, v_it]),
+            #                                      size=self.num_neg_samples * 2, replace=False)
 
-            batch_embeddings_u_neg.append(torch.cat((z_prev[u_it].expand(self.num_neg_samples, -1),
-                                                     z_prev[v_neg]), dim=0))
-            batch_embeddings_v_neg.append(torch.cat([z_prev[v_it].expand(self.num_neg_samples, -1),
-                                                     z_prev[u_neg]], dim=0))
+            for q in range(self.num_neg_samples):
+                batch_embeddings_u_neg.extend([z_prev[u_it], z_prev[batch_u_neg[q]]])
+                batch_embeddings_v_neg.extend([z_prev[batch_v_neg[q]], z_prev[v_it]])
+
+            # batch_embeddings_u_neg.append(torch.cat((z_prev[u_it].expand(self.num_neg_samples, -1),
+            #                                          z_prev[u_neg]), dim=0))
+            # batch_embeddings_v_neg.append(torch.cat([z_prev[v_neg], z_prev[v_it].expand(self.num_neg_samples, -1)], dim=0))
 
             ## 5. Compute  conditional density for all possible pairs
             with torch.no_grad():
-                z_uv_it = torch.cat((z_prev[u_it].unsqueeze(0).expand(self.num_nodes,-1),
-                           z_prev[v_it].unsqueeze(0).expand(self.num_nodes, -1)), dim=0)
+                z_uv_it = torch.cat((z_prev[u_it].detach().unsqueeze(0).expand(self.num_nodes,-1),
+                           z_prev[v_it].detach().unsqueeze(0).expand(self.num_nodes, -1)), dim=0)
                 # two type of events: assoc + comm
-                lambda_uv_pred = self.compute_intensity_lambda(z_uv_it, z_prev.repeat(2,1), et_it.repeat(len(z_uv_it)))
+                lambda_uv_pred = self.compute_intensity_lambda(z_uv_it, z_prev.detach().repeat(2,1), et_it.repeat(len(z_uv_it))).detach()
                 if not self.training:
                     A_pred[it, u_it, :] = lambda_uv_pred[:self.num_nodes]
                     A_pred[it, v_it, :] = lambda_uv_pred[self.num_nodes:]
+                    assert torch.sum(torch.isnan(A_pred[it])) == 0, (it, torch.sum(torch.isnan(A_pred[it])))
                     s_u_v = self.compute_cond_density(u_it, v_it, t_bar[it])
                     surv[it, [u_it, v_it], :] = s_u_v
                 time_key = int(t[it])
@@ -170,8 +195,9 @@ class DyRep(torch.nn.Module):
                     self.time_keys = list(time_keys[:-1])
                     self.Lambda_dict[:-1] = self.Lambda_dict.clone()[1:]
                     self.Lambda_dict[-1] = 0
-                self.Lambda_dict[[len(self.time_keys)]] = lambda_uv_pred[idx].sum()
+                self.Lambda_dict[[len(self.time_keys)]] = lambda_uv_pred[idx].sum().detach()
                 self.time_keys.append(time_key)
+                # ###############For time prediction
                 if not self.training:
                     # stored_S = self.S.clone()
                     t_cur_date = datetime.fromtimestamp(int(t[it]))
@@ -207,19 +233,23 @@ class DyRep(torch.nn.Module):
 
                         # self.update_A_S(u_it, v_it, et_it, lambda_t_sample)
 
-                        u_neg = self.random_state.choice(np.delete(u_all_node, u_it_idx), size=self.num_neg_samples,
-                                                         replace=(len(u_all_node) - 1 < self.num_neg_samples))
+                        # u_neg = self.random_state.choice(np.delete(u_all_node, u_it_idx), size=self.num_neg_samples,
+                        #                                  replace=(len(u_all_node) - 1 < self.num_neg_samples))
+                        #
+                        # v_neg = self.random_state.choice(np.delete(v_all_node, v_it_idx), size=self.num_neg_samples,
+                        #                                  replace=(len(v_all_node) - 1 < self.num_neg_samples))
 
-                        v_neg = self.random_state.choice(np.delete(v_all_node, v_it_idx), size=self.num_neg_samples,
-                                                         replace=(len(v_all_node) - 1 < self.num_neg_samples))
-
+                        batch_uv_neg_sample = self.random_state.choice(batch_nodes, size=self.num_neg_samples * 2,
+                                                                replace=len(batch_nodes) < 2 * self.num_neg_samples)
+                        u_neg_sample = batch_uv_neg_sample[self.num_neg_samples:]
+                        v_neg_sample = batch_uv_neg_sample[:self.num_neg_samples]
                         embeddings_u_neg = torch.cat((prev_embedding[u_it].view(1,-1).expand(self.num_neg_samples,-1),
-                                                        prev_embedding[v_neg]),dim=0)
-                        embeddings_v_neg = torch.cat([prev_embedding[v_it].view(1,-1).expand(self.num_neg_samples,-1),
-                                                        prev_embedding[u_neg]],dim=0)
+                                                        prev_embedding[u_neg_sample]),dim=0)
+                        embeddings_v_neg = torch.cat([prev_embedding[v_neg_sample],
+                                                      prev_embedding[v_it].view(1,-1).expand(self.num_neg_samples,-1)],dim=0)
 
-                        surv_sample = sum(self.compute_intensity_lambda(embeddings_u_neg, embeddings_v_neg, torch.tensor(0)))+\
-                            sum(self.compute_intensity_lambda(embeddings_u_neg, embeddings_v_neg, torch.tensor(1)))
+                        surv_sample = sum(self.compute_intensity_lambda(embeddings_u_neg, embeddings_v_neg, torch.zeros(len(embeddings_u_neg))))+\
+                            sum(self.compute_intensity_lambda(embeddings_u_neg, embeddings_v_neg, torch.ones(len(embeddings_u_neg))))
 
                         surv_allsamples[n-1] = surv_sample/self.num_neg_samples
 
@@ -238,7 +268,8 @@ class DyRep(torch.nn.Module):
                     # self.S = stored_S.clone()
 
             ## 6. Update the embedding z
-            self.z = z_new
+            z_all.append(z_new)
+        self.z = z_new
 
         #### batch update for all events' intensity
 
@@ -256,20 +287,46 @@ class DyRep(torch.nn.Module):
         else:
             lambda_uv = torch.cat(lambda_uv, dim=0)
 
+
+        # batch_embeddings_u_neg = torch.stack(batch_embeddings_u_neg, dim=0)
+        # batch_embeddings_v_neg = torch.stack(batch_embeddings_v_neg, dim=0)
+        # non_events = len(batch_embeddings_u_neg)
+        # lambda_uv_neg = torch.zeros(non_events * 2, device=self.device)
+        # non_idx = None
+        # empty_t = torch.zeros(non_events, dtype=torch.long)
+        # types_lst = torch.arange(2)
+        # for k in types_lst:
+        #     if non_idx is None:
+        #         non_idx = np.arange(non_events)
+        #     else:
+        #         non_idx += non_events
+        #     lambda_uv_neg[non_idx] = self.compute_intensity_lambda(batch_embeddings_u_neg, batch_embeddings_v_neg, empty_t + k)
+
+        # for i,k in enumerate(event_types):
+        #     u_it, v_it = u_all[i], v_all[i]
+        #     self.update_A_S(u_it, v_it, k, lambda_uv[i].item())
+
         # batch update for all non events' intesnity
-        batch_embeddings_u_neg = torch.cat(batch_embeddings_u_neg, dim=0)
-        batch_embeddings_v_neg = torch.cat(batch_embeddings_v_neg, dim=0)
-        lambda_uv_neg_0 = self.compute_intensity_lambda(batch_embeddings_u_neg, batch_embeddings_v_neg, torch.tensor(0))
-        lambda_uv_neg_1 = self.compute_intensity_lambda(batch_embeddings_u_neg, batch_embeddings_v_neg, torch.tensor(1))
-        lambda_uv_neg = (lambda_uv_neg_0 + lambda_uv_neg_1)/self.num_neg_samples
-
-
+        # ##### self code
+        # batch_embeddings_u_neg = torch.cat(batch_embeddings_u_neg, dim=0)
+        # batch_embeddings_v_neg = torch.cat(batch_embeddings_v_neg, dim=0)
+        batch_embeddings_u_neg = torch.stack(batch_embeddings_u_neg, dim=0)
+        batch_embeddings_v_neg = torch.stack(batch_embeddings_v_neg, dim=0)
+        neg_events_len = len(batch_embeddings_u_neg)
+        lambda_uv_neg = torch.zeros(neg_events_len * 2, device=self.device)
+        lambda_uv_neg[:neg_events_len] = self.compute_intensity_lambda(batch_embeddings_u_neg, batch_embeddings_v_neg,
+                                                                       torch.zeros(neg_events_len))
+        lambda_uv_neg[neg_events_len:] = self.compute_intensity_lambda(batch_embeddings_u_neg, batch_embeddings_v_neg,
+                                                                       torch.ones(neg_events_len))
+        # lambda_uv_neg_0 = self.compute_intensity_lambda(batch_embeddings_u_neg, batch_embeddings_v_neg, torch.tensor(0))
+        # lambda_uv_neg_1 = self.compute_intensity_lambda(batch_embeddings_u_neg, batch_embeddings_v_neg, torch.tensor(1))
+        # lambda_uv_neg = (lambda_uv_neg_0 + lambda_uv_neg_1)/self.num_neg_samples
 
 
         # lambda_uv_neg = torch.cat(lambda_uv_neg, dim=0) / self.num_neg_samples
 
-
-        return lambda_uv, lambda_uv_neg, A_pred, surv, expected_time
+        return lambda_uv, lambda_uv_neg / self.num_neg_samples, A_pred, surv, expected_time
+        # return lambda_uv, lambda_uv_neg, A_pred, surv, expected_time
 
     def compute_intensity_lambda(self, z_u, z_v, et_uv):
         z_u = z_u.view(-1, self.hidden_dim)
@@ -306,7 +363,6 @@ class DyRep(torch.nn.Module):
         return z_new
 
     def update_A_S(self, u_it, v_it, et_it, lambda_uv_t):
-        # update A
         if self.all_comms:
             self.A[u_it, v_it, 0] = self.A[v_it, u_it, 0] = 1
         else:
