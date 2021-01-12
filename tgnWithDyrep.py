@@ -114,13 +114,13 @@ class DyRepDecoder(torch.nn.Module):
 
     def forward(self, z_src, z_dst, z_neg_src, z_neg_dst):
 
-        lambda_uv = self.intensity_rate_lambda(z_src, z_dst)
+        lambda_uv = self.compute_intensity_lambda(z_src, z_dst)
 
-        surv_u = self.intensity_rate_lambda(
+        surv_u = self.compute_intensity_lambda(
             z_src.unsqueeze(1).repeat(1,  self.num_surv_samples, 1).view(-1, self.embed_dim),
             z_neg_dst)
 
-        surv_v = self.intensity_rate_lambda(
+        surv_v = self.compute_intensity_lambda(
             z_neg_src,
             z_dst.unsqueeze(1).repeat(1, self.num_surv_samples, 1).view(-1, self.embed_dim))
 
@@ -136,7 +136,8 @@ class DyRepDecoder(torch.nn.Module):
         g = self.omega(z_cat).flatten()
 
         g_psi = torch.clamp(g / (self.psi + 1e-7), -75, 75)  # avoid overflow
-        Lambda = self.psi * torch.log(1 + torch.exp(g_psi))
+        # Lambda = self.psi * torch.log(1 + torch.exp(g_psi))
+        Lambda = self.psi * (torch.log(1 + torch.exp(-g_psi)) + g_psi)
 
         return Lambda
 
@@ -146,10 +147,11 @@ class DyRepDecoder(torch.nn.Module):
         g = g.flatten()
         return g
 
+    # compute the intensity lambda (symmetric)
     def intensity_rate_lambda(self, z_u, z_v):
         z_u = z_u.view(-1, self.embed_dim).contiguous()
         z_v = z_v.view(-1, self.embed_dim).contiguous()
-        g = 0.5 * (self.g_fn(z_u, z_v) + self.g_fn(z_v, z_u))  # make it symmetric, because most events are symmetric
+        g = 0.5 * (self.g_fn(z_u, z_v) + self.g_fn(z_v, z_u))
         g_psi = torch.clamp(g / (self.psi + 1e-7), -75, 75)  # to prevent overflow
         Lambda = self.psi * (torch.log(1 + torch.exp(-g_psi)) + g_psi)
         return Lambda
@@ -174,7 +176,7 @@ gnn = GraphAttentionEmbedding(
 
 
 num_surv_samples = 5
-num_time_samples = 10
+num_time_samples = 5
 
 dyrep = DyRepDecoder(
     embedding_dim=embedding_dim,
@@ -219,15 +221,19 @@ def train():
         src, pos_dst, t, msg = batch.src, batch.dst, batch.t, batch.msg
 
         # Sample negative destination nodes.
-        neg_dst = torch.randint(min_dst_idx, max_dst_idx + 1, (src.size(0), ),
-                                dtype=torch.long, device=device)
+        # neg_dst = torch.randint(min_dst_idx, max_dst_idx + 1, (src.size(0), ),
+        #                         dtype=torch.long, device=device)
+        # Sample negative destination nodes， num_surv_samples for each node in the batch
         neg_dst_surv = torch.randint(min_dst_idx, max_dst_idx + 1, (src.size(0)*num_surv_samples, ),
                                      dtype=torch.long, device=device)
+
+        # Sample negative source nodes， num_surv_samples for each node in the batch
         neg_src_surv = torch.randint(min_src_idx, max_src_idx + 1, (src.size(0)*num_surv_samples, ),
                                      dtype=torch.long, device=device)
 
         # n_id = torch.cat([src, pos_dst, neg_dst]).unique()
-        n_id = torch.cat([src, pos_dst, neg_dst, neg_dst_surv, neg_src_surv]).unique()
+        n_id = torch.cat([src, pos_dst, neg_src_surv, neg_dst_surv]).unique()
+        # n_id = torch.cat([src, pos_dst, neg_dst_surv]).unique()
         n_id, edge_index, e_id = neighbor_loader(n_id)
         assoc[n_id] = torch.arange(n_id.size(0), device=device)
 
@@ -237,7 +243,8 @@ def train():
 
         # loss = dyrep(z[assoc[src]], z[assoc[pos_dst]], z[assoc[neg_dst]])
 
-        loss = dyrep(z[assoc[src]], z[assoc[pos_dst]], z[assoc[neg_dst_surv]], z[assoc[neg_src_surv]])
+        loss = dyrep(z[assoc[src]], z[assoc[pos_dst]], z[assoc[neg_src_surv]], z[assoc[neg_dst_surv]])
+        # loss = dyrep(z[assoc[src]], z[assoc[pos_dst]], z[assoc[neg_dst_surv]])
 
         if (batch_id) % 100 == 0:
             print("Batch {}, Loss {}".format(batch_id+1, loss))
@@ -279,37 +286,47 @@ def test(inference_data, return_time_hr):
     for batch_id, batch in enumerate(tqdm(inference_data.seq_batches(batch_size=200))):
         src, pos_dst, t, msg = batch.src, batch.dst, batch.t, batch.msg
 
-        neg_dst = torch.randint(min_dst_idx, max_dst_idx + 1, (src.size(0), ),
-                                dtype=torch.long, device=device)
+        # neg_dst = torch.randint(min_dst_idx, max_dst_idx + 1, (src.size(0), ),
+        #                         dtype=torch.long, device=device)
+
+        # Negative sampling for the survival function
         neg_dst_surv = torch.randint(min_dst_idx, max_dst_idx + 1, (src.size(0)*num_surv_samples, ),
                                      dtype=torch.long, device=device)
         neg_src_surv = torch.randint(min_src_idx, max_src_idx + 1, (src.size(0)*num_surv_samples, ),
                                      dtype=torch.long, device=device)
 
         # n_id = torch.cat([src, pos_dst, neg_dst]).unique()
-        n_id = torch.cat([src, pos_dst, neg_dst, neg_dst_surv, neg_src_surv]).unique()
+        n_id = torch.cat([src, pos_dst, neg_dst_surv, neg_src_surv]).unique()
         n_id, edge_index, e_id = neighbor_loader(n_id)
         assoc[n_id] = torch.arange(n_id.size(0), device=device)
 
         z, last_update = memory(n_id)
         z = gnn(z, last_update, edge_index, data.t[e_id], data.msg[e_id])
-        loss = dyrep(z[assoc[src]], z[assoc[pos_dst]], z[assoc[neg_dst_surv]], z[assoc[neg_src_surv]])
+        loss = dyrep(z[assoc[src]], z[assoc[pos_dst]], z[assoc[neg_src_surv]], z[assoc[neg_dst_surv]])
         total_loss += float(loss) * batch.num_events
         return_time_pred = []
+
+        # making itme prediction  for each node in the batch
         for src_c, pos_dst_c, t_c, msg_c in zip(src, pos_dst, t, msg):
+            # just update the current node to the memory
             memory.update_state(src_c.expand(2), pos_dst_c.expand(2), t_c.expand(2), msg_c.view(1,-1).expand(2,-1))
 
             t_cur_date = datetime.fromtimestamp(int(t_c))
+            # Take the most recent last update time in the node pair
             t_prev = datetime.fromtimestamp(int(max(last_update[assoc[src_c]], last_update[assoc[pos_dst_c]])))
+            # The time difference between current time and most recent update time would be a base for the future time sampling
             td = t_cur_date - t_prev
             time_scale_hour = round((td.days * 24 + td.seconds / 3600), 3)
             embeddings_u, embeddings_v = [], []
             surv_allsamples = torch.zeros(num_time_samples)
+            # random generate factor [0,2] for the time sampling
             factor_samples = 2 * random_state.rand(num_time_samples)
             sampled_time_scale = time_scale_hour * factor_samples
+            # make back up for the msg store, memoruy and
             msg_src_c_store, msg_dst_c_store = copy.deepcopy(memory.msg_s_store[src_c.item()]), copy.deepcopy(memory.msg_d_store[pos_dst_c.item()])
             memory_src_c, memory_dst_c = memory.memory[src_c].clone(), memory.memory[pos_dst_c].clone()
             last_update_src_c, last_update_dst_c = memory.last_update[src_c].clone(), memory.last_update[pos_dst_c].clone()
+
             for n in range(1, num_time_samples+1):
                 td_hours_n = sum(sampled_time_scale[:n])
                 t_c_n = int((t_cur_date + timedelta(hours=td_hours_n)).timestamp())
@@ -322,7 +339,6 @@ def test(inference_data, return_time_hr):
                 n_id_c, edge_index_c, e_id_c = neighbor_loader(n_id_c)
                 assoc[n_id_c] = torch.arange(n_id_c.size(0), device=device)
                 z_sample, last_update_sample = memory(n_id_c)
-                # print((src_c,pos_dst_c, t_c), z_sample[[assoc[src_c], assoc[pos_dst_c]], :])
                 embeddings_u.append(z_sample[assoc[src_c]])
                 embeddings_v.append(z_sample[assoc[pos_dst_c]])
                 surv_sample_u = dyrep.intensity_rate_lambda(
@@ -334,18 +350,15 @@ def test(inference_data, return_time_hr):
                 surv_allsamples[n-1] = torch.sum(surv_sample_u + surv_sample_v) / num_surv_samples
                 memory.update_state(src_c.expand(2), pos_dst_c.expand(2), torch.tensor([t_c_n, t_c_n]), msg_c.view(1,-1).expand(2,-1))
             # TODO: update the neigh_loader one by one
-
             memory.msg_s_store[src_c.item()], memory.msg_d_store[pos_dst_c.item()] = copy.deepcopy(msg_src_c_store), copy.deepcopy(msg_dst_c_store)
             memory.memory[src_c], memory.memory[pos_dst_c] = memory_src_c.clone(), memory_dst_c.clone()
             memory.last_update[src_c], memory.last_update[pos_dst_c] = last_update_src_c.clone(), last_update_dst_c.clone()
-
             embeddings_u = torch.stack(embeddings_u, dim=0)
             embeddings_v = torch.stack(embeddings_v, dim=0)
             lambda_t_allsamples = dyrep.intensity_rate_lambda(embeddings_u, embeddings_v)
             f_samples = lambda_t_allsamples * surv_allsamples
             expectation = torch.from_numpy(np.cumsum(sampled_time_scale)) * f_samples
             return_time_pred.append(expectation.sum())
-        # memory.update_state(src, pos_dst, t, msg)
         neighbor_loader.insert(src, pos_dst)
         return_time_pred = torch.stack(return_time_pred).numpy()
         mae = np.mean(abs(return_time_pred - return_time_hr[batch_id*200:(batch_id*200+batch.num_events)]))
