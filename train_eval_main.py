@@ -369,6 +369,10 @@ if __name__ == '__main__':
                   train_td_max=train_td_max,
                   all_comms=args.all_comms).to(args.device)
 
+    if args.dataset in ['wikipedia', 'reddit']:
+        model.min_src_idx, model.max_src_idx = train_set.min_src_idx, train_set.max_src_idx
+        model.min_dst_idx, model.max_dst_idx = train_set.min_dst_idx, train_set.max_dst_idx
+
     print(model)
     print('number of training parameters: %d' %
           np.sum([np.prod(p.size()) if p.requires_grad else 0 for p in model.parameters()]))
@@ -435,7 +439,7 @@ if __name__ == '__main__':
             time_iter = time.time() - start
             model.z = model.z.detach()  # to reset the computational graph and avoid backpropagating second time
             model.S = model.S.detach()
-            if batch_idx % 10 == 0:
+            if batch_idx % 100 == 0:
                 if batch_idx == 0:
                     first_batch.append(loss)
                 print("Training epoch {}, batch {}/{}, loss {}, loss_lambda {}, loss_surv {}".format(

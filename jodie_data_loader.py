@@ -32,6 +32,9 @@ class JodieDataset(EventsDataset):
         destinations = destinations-shift
         event_type = graph_df.event_types.values
 
+        self.min_src_idx, self.max_src_idx = min(sources), max(sources)
+        self.min_dst_idx, self.max_dst_idx = min(destinations), max(destinations)
+
         if not all_comms:
             visited = set()
             for idx, (source, des) in enumerate(zip(sources, destinations)):
