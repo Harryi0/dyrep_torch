@@ -464,7 +464,7 @@ if __name__ == '__main__':
         print("Testing Start")
         test_mae, test_loss = test_time_pred(model, test_reoccur_dict, test_reoccur_time_true)
         all_test_mae.append(test_mae)
-        all_test_loss
+        all_test_loss.append(test_loss)
         # result = test(model, test_reoccur_dict)
         print("Test end")
     #
