@@ -23,7 +23,9 @@ class JodieDataset(EventsDataset):
         graph_df = pd.read_csv('./Jodie/ml_{}.csv'.format(dataset_name))
         graph_df = graph_df.sort_values('ts')
         graph_df['event_types'] = 1
-        test_time = np.quantile(graph_df.ts, 0.70)
+        val_time = np.quantile(graph_df.ts, 0.70)
+        # val_time = np.quantile(graph_df.ts, 0.85)
+        test_time = np.quantile(graph_df.ts, 0.85)
         sources = graph_df.u.values-1
         destinations = graph_df.i.values-1
         shift = min(destinations)-max(sources)-1
@@ -42,7 +44,9 @@ class JodieDataset(EventsDataset):
         # timestamps_date = graph_df.ts.apply(lambda x: datetime.fromtimestamp((int(x)), tz=None))
         timestamps_date = np.array(list(map(lambda x: datetime.fromtimestamp(int(x), tz=None), timestamps)))
 
-        train_mask = timestamps<=test_time
+        train_mask = timestamps<=val_time
+        # test_mask = timestamps>val_time
+        val_mask = val_time<timestamps<=test_time
         test_mask = timestamps>test_time
 
         if self.link_feat:
@@ -53,12 +57,13 @@ class JodieDataset(EventsDataset):
         if split == 'train':
             self.all_events = np.array(all_events)[train_mask].tolist()
         elif split == 'test':
-            self.all_events = np.array(all_events)[test_mask].tolist()
+            self.all_events = np.array(all_events)[val_mask].tolist()
         else:
             raise ValueError('invalid split', split)
 
         self.FIRST_DATE = datetime.fromtimestamp(0)
-        self.END_DATE = timestamps_date[-1]
+        # self.END_DATE = timestamps_date[-1]
+        self.END_DATE = test_time
 
         self.N_nodes = len(np.unique(sources)) + len(np.unique(destinations))
 

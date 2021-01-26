@@ -12,6 +12,7 @@ from torch.utils.data import DataLoader
 import torch.optim as optim
 import torch.optim.lr_scheduler as lr_scheduler
 import argparse
+import matplotlib.pyplot as plt
 
 from torch import autograd
 
@@ -21,7 +22,9 @@ from github_data_loader import GithubDataset
 from synthetic_data_loader import SyntheticDataset
 from utils import *
 from dyrep import DyRep
+from dyrepHawkes import DyRepHawkes
 from tqdm import tqdm
+from collections import defaultdict
 
 def get_return_time(data_set):
     reoccur_dict = {}
@@ -318,16 +321,52 @@ if __name__ == '__main__':
 
     test_reoccur_dict, test_reoccur_time_true = get_return_time(test_set)
 
+
+    def normalize_td(data_set):
+        dic = defaultdict(list)
+        for src, dst, _, t in data_set.all_events:
+            dic[src].append(t.timestamp())
+            dic[dst].append(t.timestamp())
+        all_diff = []
+        all_td = []
+        for k, v in dic.items():
+            ts = np.array(v)
+            td = np.diff(ts)
+            all_diff.append(td)
+            if len(v) >= 2:
+                timestamp = np.array(list(map(lambda x: datetime.fromtimestamp(x), v)))
+                delta = np.diff(timestamp)
+                all_td.append(delta)
+        all_diff = np.concatenate(all_diff)
+        all_td = np.concatenate(all_td)
+        all_td_hr = np.array(list(map(lambda x: round(x.days * 24 + x.seconds / 3600, 3), all_td)))
+        return all_diff.mean(), all_diff.std(), all_diff.max(), \
+               round(all_td_hr.mean(), 3), round(all_td_hr.std(), 3), round(all_td_hr.max(), 3)
+
+
+    train_td_mean, train_td_std, train_td_max, train_td_hr_mean, train_td_hr_std, train_td_hr_max = normalize_td(train_set)
+    # train_td_max = 1792267.0
     end_date = test_set.END_DATE
 
-    model = DyRep(num_nodes=train_set.N_nodes,
+    # model = DyRep(num_nodes=train_set.N_nodes,
+    #               hidden_dim=args.hidden_dim,
+    #               random_state= rnd,
+    #               first_date=train_set.FIRST_DATE,
+    #               end_datetime=end_date,
+    #               num_neg_samples=10,
+    #               num_time_samples=5,
+    #               device=args.device,
+    #               train_td_max=train_td_max,
+    #               all_comms=args.all_comms).to(args.device)
+    model = DyRepHawkes(num_nodes=train_set.N_nodes,
                   hidden_dim=args.hidden_dim,
                   random_state= rnd,
                   first_date=train_set.FIRST_DATE,
                   end_datetime=end_date,
-                  num_neg_samples=5,
-                  num_time_samples=10,
+                  num_neg_samples=10,
+                  num_time_samples=5,
                   device=args.device,
+                  train_td_max=train_td_max,
                   all_comms=args.all_comms).to(args.device)
 
     print(model)
@@ -351,7 +390,10 @@ if __name__ == '__main__':
     batch_start = 0
 
     total_losses = []
+    total_losses_lambda, total_losses_surv = [], []
     test_MAR, test_HITS10, test_loss = [], [], []
+    all_test_mae, all_test_loss = [], []
+    first_batch = []
     for epoch in range(epoch_start, args.epochs + 1):
         # def reset_state(self, node_embeddings_initial, A_initial, node_degree_initial, time_bar, resetS=False):
         # Reinitialize node embeddings and adjacency matrices, but keep the model parameters intact
@@ -373,6 +415,7 @@ if __name__ == '__main__':
 
         start = time.time()
         total_loss = 0
+        total_loss_lambda, total_loss_surv = 0, 0
         for batch_idx, data_batch in enumerate(tqdm(train_loader)):
             optimizer.zero_grad()
             data_batch[2] = data_batch[2].float().to(args.device)
@@ -392,26 +435,61 @@ if __name__ == '__main__':
             time_iter = time.time() - start
             model.z = model.z.detach()  # to reset the computational graph and avoid backpropagating second time
             model.S = model.S.detach()
-            if batch_idx % 50 == 0:
-                print("Training epoch {}, batch {}/{}, loss {}".format(epoch, batch_idx+1, len(train_loader), loss))
+            if batch_idx % 10 == 0:
+                if batch_idx == 0:
+                    first_batch.append(loss)
+                print("Training epoch {}, batch {}/{}, loss {}, loss_lambda {}, loss_surv {}".format(
+                    epoch, batch_idx+1, len(train_loader), loss, losses[0]/args.batch_size, losses[1]/args.batch_size))
                 # result = test_time_pred(model, test_reoccur_dict, test_reoccur_time_true)
                 # result = test(model, test_reoccur_dict)
             total_loss += loss*args.batch_size
+            total_loss_lambda += losses[0]
+            total_loss_surv += losses[1]
             scheduler.step()
 
         total_loss = float(total_loss)/len(train_set.all_events)
+        total_loss_lambda = float(total_loss_lambda)/len(train_set.all_events)
+        total_loss_surv = float(total_loss_surv)/len(train_set.all_events)
+
         total_losses.append(total_loss)
-        print("Training epoch {}/{}, time per batch {}, total loss {}".format(epoch, args.epochs + 1, time_iter/float(batch_idx+1), total_loss))
+        total_losses_lambda.append(total_loss_lambda)
+        total_losses_surv.append(total_loss_surv)
+        print("Training epoch {}/{}, time per batch {}, loss {}, loss_lambda {}, loss_surv {}".format(
+            epoch, args.epochs + 1, time_iter/float(batch_idx+1), total_loss, total_loss_lambda, total_loss_surv))
 
         print("Testing Start")
-        result = test_time_pred(model, test_reoccur_dict, test_reoccur_time_true)
+        test_mae, test_loss = test_time_pred(model, test_reoccur_dict, test_reoccur_time_true)
+        all_test_mae.append(test_mae)
+        all_test_loss
         # result = test(model, test_reoccur_dict)
         print("Test end")
+    #
+    #     # result = test(model, n_test_batches=None)
+    #     # test_MAR.append(np.mean(result[0]['Com']))
+    #     # test_HITS10.append(np.mean(result[1]['Com']))
+    #     # test_loss.append(result[2])
+    #     # print("Testing results: MAR {}, HITS10 {}, test_loss {}".format(test_MAR[-1], test_HITS10[-1], test_loss[-1]))
+    #
+    # print('end time:', datetime.now())
 
-        # result = test(model, n_test_batches=None)
-        # test_MAR.append(np.mean(result[0]['Com']))
-        # test_HITS10.append(np.mean(result[1]['Com']))
-        # test_loss.append(result[2])
-        # print("Testing results: MAR {}, HITS10 {}, test_loss {}".format(test_MAR[-1], test_HITS10[-1], test_loss[-1]))
 
-    print('end time:', datetime.now())
+    fig = plt.figure(figsize=(12, 5))
+    plt.subplot(1, 2, 1)
+    plt.plot(np.arange(1, args.epochs + 1), np.array(total_losses), 'k', label='total loss')
+    plt.plot(np.arange(1, args.epochs + 1), np.array(total_losses_lambda), 'r', label='loss events')
+    plt.plot(np.arange(1, args.epochs + 1), np.array(total_losses_surv), 'b', label='loss nonevents')
+    plt.legend()
+    plt.title("DyRep, wiki, training loss")
+    plt.subplot(1, 2, 2)
+    plt.plot(np.arange(1, args.epochs + 1), np.array(first_batch), 'r')
+    plt.title("DyRep, loss for the first batch for each epoch")
+    fig.savefig('dyrepHawkes_wiki_train.png')
+
+    fig = plt.figure(figsize=(12, 5))
+    plt.subplot(1, 2, 1)
+    plt.plot(np.arange(1, args.epochs + 1), np.array(all_test_loss), 'k', label='total loss')
+    plt.title("DyRep, wiki, test loss")
+    plt.subplot(1, 2, 2)
+    plt.plot(np.arange(1, args.epochs + 1), np.array(all_test_mae), 'r')
+    plt.title("DyRep, wiki, test mae")
+    fig.savefig('dyrepHawkes_wiki_val.png')
