@@ -365,15 +365,15 @@ def train():
         # neg_src_surv = torch.randint(min_src_idx, max_src_idx + 1, (src.size(0)*num_surv_samples, ),
         #                              dtype=torch.long, device=device)
         ################ Sample negative destination nodes from non-happened dst
-        # neg_src_nodes = np.delete(np.arange(min_src_idx, max_src_idx + 1), src.numpy() - min_src_idx)
-        # neg_src_surv = torch.tensor(random_state.choice(neg_src_nodes, size=src.size(0)*num_surv_samples,
-        #                                         replace=len(neg_src_nodes) < src.size(0)*num_surv_samples))
+        neg_src_nodes = np.delete(np.arange(min_src_idx, max_src_idx + 1), src.numpy() - min_src_idx)
+        neg_src_surv = torch.tensor(random_state.choice(neg_src_nodes, size=src.size(0)*num_surv_samples,
+                                                replace=len(neg_src_nodes) < src.size(0)*num_surv_samples))
 
 
         # n_id = torch.cat([src, pos_dst, neg_dst]).unique()
         ######### only contained sampled negative
-        # n_id = torch.cat([src, pos_dst, neg_dst_surv, neg_src_surv]).unique()
-        n_id = torch.cat([src, pos_dst, neg_dst_surv]).unique()
+        n_id = torch.cat([src, pos_dst, neg_dst_surv, neg_src_surv]).unique()
+        # n_id = torch.cat([src, pos_dst, neg_dst_surv]).unique()
         ######### include all of the negative nodes (only dst)
         # n_id=torch.cat([src, pos_dst, torch.arange(min_dst_idx, max_dst_idx+1)])
 
@@ -386,7 +386,7 @@ def train():
 
         # loss = dyrep(z[assoc[src]], z[assoc[pos_dst]], z[assoc[neg_dst]])
         loss_lambda, loss_surv_u, loss_surv_v, _ = dyrep(z, assoc, src, pos_dst, neg_dst_surv,
-                                                         neg_src_surv=None, last_update=last_update, cur_time=t)
+                                                         neg_src_surv=neg_src_surv, last_update=last_update, cur_time=t)
         loss = loss_lambda + loss_surv_u + loss_surv_v
 
         if (batch_id) % 100 == 0:
@@ -453,9 +453,9 @@ def test(inference_data, return_time_hr=None):
         # neg_src_surv = torch.randint(min_src_idx, max_src_idx + 1, (src.size(0)*num_surv_samples, ),
         #                              dtype=torch.long, device=device)
 
-        # neg_src_nodes = np.delete(np.arange(min_src_idx, max_src_idx + 1), src.numpy() - min_src_idx)
-        # neg_src_surv = torch.tensor(random_state.choice(neg_src_nodes, size=src.size(0)*num_surv_samples,
-        #                                         replace=len(neg_src_nodes) < src.size(0)*num_surv_samples))
+        neg_src_nodes = np.delete(np.arange(min_src_idx, max_src_idx + 1), src.numpy() - min_src_idx)
+        neg_src_surv = torch.tensor(random_state.choice(neg_src_nodes, size=src.size(0)*num_surv_samples,
+                                                replace=len(neg_src_nodes) < src.size(0)*num_surv_samples))
 
         all_dst = torch.arange(min_dst_idx, max_dst_idx+1)
         all_src = torch.arange(min_src_idx, max_src_idx+1)
@@ -465,8 +465,8 @@ def test(inference_data, return_time_hr=None):
         # n_id = torch.cat([src, pos_dst, neg_dst_surv, neg_dst]).unique()
         # n_id = torch.cat([src, all_dst, neg_src_surv]).unique()
         ####### include all dst nodes
-        # n_id = torch.cat([all_src, all_dst]).unique()
-        n_id = torch.cat([src, all_dst]).unique()
+        n_id = torch.cat([all_src, all_dst]).unique()
+        # n_id = torch.cat([src, all_dst]).unique()
 
         n_id, edge_index, e_id = neighbor_loader(n_id)
         assoc[n_id] = torch.arange(n_id.size(0), device=device)
@@ -476,7 +476,7 @@ def test(inference_data, return_time_hr=None):
 
         assert z.size(0) > max(assoc[n_id])
         loss_lambda, loss_surv_u, loss_surv_v, cond = dyrep(z, assoc, src, pos_dst, neg_dst_surv,
-                                                            neg_src_surv=None, neg_dst=neg_dst,
+                                                            neg_src_surv=neg_src_surv, neg_dst=neg_dst,
                                                             last_update=last_update, cur_time = t)
         # loss = dyrep(z, last_update, t, assoc, src, pos_dst, neg_src_surv, neg_dst_surv)
         pos_out, neg_out = cond[0], cond[1]
@@ -525,15 +525,15 @@ def test(inference_data, return_time_hr=None):
 
                 # neg_src_c = torch.randint(min_src_idx, max_src_idx + 1, (num_surv_samples, ),
                 #                 dtype=torch.long, device=device)
-                # neg_src_c = torch.tensor(random_state.choice(neg_src_nodes, size=num_surv_samples))
+                neg_src_c = torch.tensor(random_state.choice(neg_src_nodes, size=num_surv_samples))
 
                 surv_sample_u = dyrep.hawkes_intensity(
                     z[assoc[src_c]].view(1, -1).expand(num_surv_samples, -1),
                     z[assoc[neg_dst_c]], td_c)
-                # surv_sample_v = dyrep.hawkes_intensity(
-                #     z[assoc[neg_src_c]],
-                #     z[assoc[pos_dst_c]].view(1, -1).expand(num_surv_samples, -1), td_c)
-                surv_sample_v = torch.zeros(surv_sample_u.size())
+                surv_sample_v = dyrep.hawkes_intensity(
+                    z[assoc[neg_src_c]],
+                    z[assoc[pos_dst_c]].view(1, -1).expand(num_surv_samples, -1), td_c)
+                # surv_sample_v = torch.zeros(surv_sample_u.size())
                 surv_allsamples[n-1] = (torch.sum(surv_sample_u) + torch.sum(surv_sample_v)) / num_surv_samples
 
             lambda_t_allsamples = dyrep.hawkes_intensity(embeddings_u, embeddings_v, all_td_c)
