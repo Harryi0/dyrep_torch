@@ -195,7 +195,7 @@ class DyRepHawkes(torch.nn.Module):
             # last_t_u_neg = t_bar[it, [u_it] * self.num_neg_samples, 0]
             # last_t_v_neg = t_bar[it, batch_v_neg, 0]
 
-            last_t_uv_neg = torch.cat([last_t_u_neg.view(-1,1), last_t_v_neg.view(-1,1)], dim=1).max(-1)[0]
+            last_t_uv_neg = torch.cat([last_t_u_neg.view(-1,1), last_t_v_neg.view(-1,1)], dim=1).max(-1)[0].to(self.device)
 
             ts_diff_neg.append(t[it] - last_t_uv_neg)
 
@@ -250,7 +250,7 @@ class DyRepHawkes(torch.nn.Module):
                     all_td_c = torch.zeros(self.num_time_samples)
 
                     t_c_n = torch.tensor(list(map(lambda x: int((t_cur_date+timedelta(hours=x)).timestamp()),
-                                                  np.cumsum(sampled_time_scale))))
+                                                  np.cumsum(sampled_time_scale)))).to(self.device)
                     all_td_c = t_c_n - t[it]
                     if self.bipartite:
                         u_neg_sample = self.random_state.choice(
@@ -271,10 +271,10 @@ class DyRepHawkes(torch.nn.Module):
 
                     embeddings_u_neg = torch.cat((
                         z_new[u_it].view(1, -1).expand(self.num_neg_samples*self.num_time_samples, -1),
-                        z_new[u_neg_sample]), dim=0)
+                        z_new[u_neg_sample]), dim=0).to(self.device)
                     embeddings_v_neg = torch.cat((
                         z_new[v_neg_sample],
-                        z_new[v_it].view(1, -1).expand(self.num_neg_samples*self.num_time_samples, -1)), dim=0)
+                        z_new[v_it].view(1, -1).expand(self.num_neg_samples*self.num_time_samples, -1)), dim=0).to(self.device)
                     all_td_c_expand = all_td_c.unsqueeze(1).repeat(1,self.num_neg_samples).view(-1)
                     surv_0 = self.compute_hawkes_lambda(embeddings_u_neg, embeddings_v_neg,
                                                         torch.zeros(len(embeddings_u_neg)),

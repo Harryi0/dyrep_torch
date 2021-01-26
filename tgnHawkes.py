@@ -594,7 +594,7 @@ plt.title("TGN + Hawkes, wiki, 4 batches * 5 events")
 ax = plt.subplot(1,2,2)
 plt.plot(np.arange(1,21), np.array(first_batch), 'r')
 plt.title("TGN+Hawkes, loss for the first batch for each epoch")
-fig.save('tgnHawkes_wiki_oneSurv_train.png')
+fig.savefig('tgnHawkes_wiki_oneSurv_train.png')
 
 fig2 = plt.figure(figsize=(18, 5))
 ax = plt.subplot(1,3,1)
