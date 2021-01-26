@@ -270,7 +270,7 @@ if __name__ == '__main__':
     parser.add_argument('--batch_size', type=int, default=200, help='batch size')
     parser.add_argument('--device', type=str, default='cpu', help='cpu or cuda')
     parser.add_argument('--lr', type=float, default=0.0002, help='learning rate')
-    parser.add_argument('--lr_decay_step', type=str, default='10', help='number of epochs after which to reduce lr')
+    parser.add_argument('--lr_decay_step', type=str, default='20', help='number of epochs after which to reduce lr')
     parser.add_argument('--epochs', type=int, default=20, help='number of epochs')
     parser.add_argument('--all_comms', type=bool, default=False, help='assume all of the links in Jodie as communication or not')
     parser.add_argument('--include_link_feat', type=bool, default=False, help='include link features or not')

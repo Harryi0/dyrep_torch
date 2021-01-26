@@ -46,7 +46,7 @@ class JodieDataset(EventsDataset):
 
         train_mask = timestamps<=val_time
         # test_mask = timestamps>val_time
-        val_mask = val_time<timestamps<=test_time
+        val_mask = (timestamps>val_time) & (timestamps<=test_time)
         test_mask = timestamps>test_time
 
         if self.link_feat:
@@ -63,7 +63,7 @@ class JodieDataset(EventsDataset):
 
         self.FIRST_DATE = datetime.fromtimestamp(0)
         # self.END_DATE = timestamps_date[-1]
-        self.END_DATE = test_time
+        self.END_DATE = self.all_events[-1][3]
 
         self.N_nodes = len(np.unique(sources)) + len(np.unique(destinations))
 
