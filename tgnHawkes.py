@@ -488,6 +488,8 @@ def test(inference_data, return_time_hr=None):
         aps.append(average_precision_score(y_true, y_pred))
         aucs.append(roc_auc_score(y_true, y_pred))
 
+        loss = loss_lambda + loss_surv_u + loss_surv_v
+
         total_loss += float(loss) * batch.num_events
 
         # memory.update_state(src, pos_dst, t, msg)
@@ -505,37 +507,30 @@ def test(inference_data, return_time_hr=None):
             # The time difference between current time and most recent update time would be a base for the future time sampling
             td = t_cur_date - t_prev
             time_scale_hour = round((td.days * 24 + td.seconds / 3600), 3)
-            # embeddings_u, embeddings_v = [], []
-            surv_allsamples = torch.zeros(num_time_samples)
+
             # random generate factor [0,2] for the time sampling
             factor_samples = 2 * random_state.rand(num_time_samples)
             sampled_time_scale = time_scale_hour * factor_samples
 
             embeddings_u = z[assoc[src_c]].expand(num_time_samples, -1)
             embeddings_v = z[assoc[pos_dst_c]].expand(num_time_samples, -1)
-            all_td_c = torch.zeros(num_time_samples)
-            for n in range(1, num_time_samples+1):
-                t_c_n = int((t_cur_date + timedelta(hours=sum(sampled_time_scale[:n]))).timestamp())
-                td_c = t_c_n - t_c
-                all_td_c[n-1] = td_c
 
-                # neg_dst_c = torch.randint(min_dst_idx, max_dst_idx + 1, (num_surv_samples, ),
-                #                 dtype=torch.long, device=device)
-                neg_dst_c = torch.tensor(random_state.choice(neg_dst_nodes, size=num_surv_samples))
-
-                # neg_src_c = torch.randint(min_src_idx, max_src_idx + 1, (num_surv_samples, ),
-                #                 dtype=torch.long, device=device)
-                neg_src_c = torch.tensor(random_state.choice(neg_src_nodes, size=num_surv_samples))
-
-                surv_sample_u = dyrep.hawkes_intensity(
-                    z[assoc[src_c]].view(1, -1).expand(num_surv_samples, -1),
-                    z[assoc[neg_dst_c]], td_c)
-                surv_sample_v = dyrep.hawkes_intensity(
-                    z[assoc[neg_src_c]],
-                    z[assoc[pos_dst_c]].view(1, -1).expand(num_surv_samples, -1), td_c)
-                # surv_sample_v = torch.zeros(surv_sample_u.size())
-                surv_allsamples[n-1] = (torch.sum(surv_sample_u) + torch.sum(surv_sample_v)) / num_surv_samples
-
+            t_c_n = torch.tensor(list(map(lambda x: int((t_cur_date + timedelta(hours=x)).timestamp()),
+                                          np.cumsum(sampled_time_scale))))
+            all_td_c = t_c_n - t_c
+            neg_dst_c = torch.tensor(random_state.choice(neg_dst_nodes, size=num_surv_samples*num_time_samples))
+            neg_src_c = torch.tensor(random_state.choice(neg_src_nodes, size=num_surv_samples*num_time_samples))
+            embeddings_u_neg = torch.cat((
+                z[assoc[src_c]].view(1, -1).expand(num_surv_samples * num_time_samples, -1),
+                z[assoc[neg_dst_c]]), dim=0)
+            embeddings_v_neg = torch.cat((
+                z[assoc[neg_src_c]],
+                z[assoc[pos_dst_c]].view(1, -1).expand(num_surv_samples * num_time_samples, -1)), dim=0)
+            all_td_c_expand = all_td_c.unsqueeze(1).repeat(1, num_surv_samples).view(-1,1).repeat(2,1).view(-1)
+            intensity = dyrep.hawkes_intensity(embeddings_u_neg, embeddings_v_neg, all_td_c_expand)\
+                .view(-1, num_surv_samples).mean(dim=-1)
+            surv_allsamples = intensity[:num_time_samples]+intensity[num_time_samples:]
+            all_td_c_expand = all_td_c.unsqueeze(1).repeat(1, num_surv_samples).view(-1)
             lambda_t_allsamples = dyrep.hawkes_intensity(embeddings_u, embeddings_v, all_td_c)
             f_samples = lambda_t_allsamples * torch.exp(-surv_allsamples)
             expectation = ((torch.from_numpy(np.cumsum(sampled_time_scale))-train_td_hr_mean)/train_td_hr_std) * f_samples
