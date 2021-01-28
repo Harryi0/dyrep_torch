@@ -46,7 +46,7 @@ train_data_small = data[:20]
 
 def normalize_td(data):
     dic = defaultdict(list)
-    src, dst, t = data.src.numpy(), data.dst.numpy(), data.t.numpy()
+    src, dst, t = data.src.cpu().numpy(), data.dst.cpu().numpy(), data.t.cpu().numpy()
     for i in range(len(src)):
         dic[src[i]].append(t[i])
         dic[dst[i]].append(t[i])
@@ -72,7 +72,7 @@ neighbor_loader = LastNeighborLoader(data.num_nodes, size=10, device=device)
 
 def get_return_time(dataset):
     reoccur_dict = {}
-    dataset_src, dataset_dst, dataset_t = dataset.src.numpy(), dataset.dst.numpy(), dataset.t.numpy()
+    dataset_src, dataset_dst, dataset_t = dataset.src.cpu().numpy(), dataset.dst.cpu().numpy(), dataset.t.cpu().numpy()
     for i in range(len(dataset_src)):
         n1, n2, t = dataset_src[i], dataset_dst[i], dataset_t[i]
         key = (n1, n2)
@@ -307,7 +307,7 @@ dyrep = DyRepDecoder(
 #     | set(link_pred.parameters()), lr=0.0001)
 optimizer = torch.optim.Adam(
     set(memory.parameters()) | set(gnn.parameters())
-    | set(dyrep.parameters()), lr=0.001)
+    | set(dyrep.parameters()), lr=0.0001)
 
 # optimizer_enc = torch.optim.Adam(
 #     set(memory.parameters()) | set(gnn.parameters()), lr=0.0001)
@@ -355,7 +355,7 @@ def train():
         #                              dtype=torch.long, device=device)
 
         ################ Sample negative destination nodes from non-happened dst
-        neg_dst_nodes = np.delete(np.arange(min_dst_idx, max_dst_idx + 1), pos_dst.numpy() - min_dst_idx)
+        neg_dst_nodes = np.delete(np.arange(min_dst_idx, max_dst_idx + 1), pos_dst.cpu().numpy() - min_dst_idx)
         neg_dst_surv = torch.tensor(random_state.choice(neg_dst_nodes, size=src.size(0)*num_surv_samples,
                                                         replace=len(neg_dst_nodes) < src.size(0)*num_surv_samples),
                                     device=device)
@@ -366,7 +366,7 @@ def train():
         # neg_src_surv = torch.randint(min_src_idx, max_src_idx + 1, (src.size(0)*num_surv_samples, ),
         #                              dtype=torch.long, device=device)
         ################ Sample negative destination nodes from non-happened dst
-        neg_src_nodes = np.delete(np.arange(min_src_idx, max_src_idx + 1), src.numpy() - min_src_idx)
+        neg_src_nodes = np.delete(np.arange(min_src_idx, max_src_idx + 1), src.cpu().numpy() - min_src_idx)
         neg_src_surv = torch.tensor(random_state.choice(neg_src_nodes, size=src.size(0)*num_surv_samples,
                                                 replace=len(neg_src_nodes) < src.size(0)*num_surv_samples),
                                     device=device)
@@ -436,15 +436,15 @@ def test(inference_data, return_time_hr=None):
     for batch_id, batch in enumerate(tqdm(inference_data.seq_batches(batch_size=200), total=119)):
         src, pos_dst, t, msg = batch.src, batch.dst, batch.t, batch.msg
 
-        # neg_dst = torch.randint(min_dst_idx, max_dst_idx + 1, (src.size(0), ),
-        #                         dtype=torch.long, device=device)
+        neg_dst = torch.randint(min_dst_idx, max_dst_idx + 1, (src.size(0), ),
+                                dtype=torch.long, device=device)
 
         # Negative sampling for the survival function
 
         # neg_dst_surv = torch.randint(min_dst_idx, max_dst_idx + 1, (src.size(0)*num_surv_samples, ),
         #                              dtype=torch.long, device=device)
 
-        neg_dst_nodes = np.delete(np.arange(min_dst_idx, max_dst_idx + 1), pos_dst.numpy() - min_dst_idx)
+        neg_dst_nodes = np.delete(np.arange(min_dst_idx, max_dst_idx + 1), pos_dst.cpu().numpy() - min_dst_idx)
 
         neg_dst = torch.tensor(random_state.choice(neg_dst_nodes, size=src.size(0),
                                                 replace=len(neg_dst_nodes) < src.size(0)),
@@ -457,7 +457,7 @@ def test(inference_data, return_time_hr=None):
         # neg_src_surv = torch.randint(min_src_idx, max_src_idx + 1, (src.size(0)*num_surv_samples, ),
         #                              dtype=torch.long, device=device)
 
-        neg_src_nodes = np.delete(np.arange(min_src_idx, max_src_idx + 1), src.numpy() - min_src_idx)
+        neg_src_nodes = np.delete(np.arange(min_src_idx, max_src_idx + 1), src.cpu().numpy() - min_src_idx)
         neg_src_surv = torch.tensor(random_state.choice(neg_src_nodes, size=src.size(0)*num_surv_samples,
                                                 replace=len(neg_src_nodes) < src.size(0)*num_surv_samples),
                                     device=device)
@@ -523,8 +523,12 @@ def test(inference_data, return_time_hr=None):
             t_c_n = torch.tensor(list(map(lambda x: int((t_cur_date + timedelta(hours=x)).timestamp()),
                                           np.cumsum(sampled_time_scale))), device=device)
             all_td_c = t_c_n - t_c
+            # neg_dst_c = torch.randint(min_dst_idx, max_dst_idx + 1, (num_surv_samples * num_time_samples, ),
+            #                 dtype=torch.long, device=device)
             neg_dst_c = torch.tensor(random_state.choice(neg_dst_nodes, size=num_surv_samples*num_time_samples),
                                      device=device)
+            # neg_src_c = torch.randint(min_src_idx, max_src_idx + 1, (num_surv_samples * num_time_samples,),
+            #                           dtype=torch.long, device=device)
             neg_src_c = torch.tensor(random_state.choice(neg_src_nodes, size=num_surv_samples*num_time_samples),
                                      device=device)
             embeddings_u_neg = torch.cat((
@@ -539,14 +543,14 @@ def test(inference_data, return_time_hr=None):
             surv_allsamples = intensity[:num_time_samples]+intensity[num_time_samples:]
             lambda_t_allsamples = dyrep.hawkes_intensity(embeddings_u, embeddings_v, all_td_c)
             f_samples = lambda_t_allsamples * torch.exp(-surv_allsamples)
-            expectation = ((torch.from_numpy(np.cumsum(sampled_time_scale))-train_td_hr_mean)/train_td_hr_std) * f_samples
+            expectation = ((torch.from_numpy(np.cumsum(sampled_time_scale)).to(device)-train_td_hr_mean)/train_td_hr_std) * f_samples
             # expectation = torch.from_numpy(np.cumsum(sampled_time_scale)) * f_samples
 
             return_time_pred.append(expectation.sum()/num_time_samples)
 
         memory.update_state(src, pos_dst, t, msg)
         neighbor_loader.insert(src, pos_dst)
-        return_time_pred = torch.stack(return_time_pred).numpy()*train_td_hr_std + train_td_hr_mean
+        return_time_pred = torch.stack(return_time_pred).cpu().numpy()*train_td_hr_std + train_td_hr_mean
         # return_time_pred = torch.stack(return_time_pred).numpy()
         mae = np.mean(abs(return_time_pred - return_time_hr[batch_id*200:(batch_id*200+batch.num_events)]))
         if batch_id % 20 == 0:
