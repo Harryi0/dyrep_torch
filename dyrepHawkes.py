@@ -11,7 +11,7 @@ class DyRepHawkes(torch.nn.Module):
 
         self.batch_update = True
         self.hawkes = True
-        self.bipartite = True
+        self.bipartite = False
         self.all_comms = all_comms
         self.include_link_features = False
 
@@ -90,9 +90,9 @@ class DyRepHawkes(torch.nn.Module):
 
         u_all,  v_all = u.data.cpu().numpy(), v.data.cpu().numpy()
         A_pred, surv, lambda_pred = None, None, None
-        # if not self.training:
-        #     A_pred = self.A.new_zeros((batch_size, self.num_nodes, self.num_nodes))
-        #     surv = self.A.new_zeros((batch_size, self.num_nodes, self.num_nodes))
+        if not self.training:
+            A_pred = self.A.new_zeros((batch_size, self.num_nodes, self.num_nodes))
+            surv = self.A.new_zeros((batch_size, self.num_nodes, self.num_nodes))
 
         time_mean = torch.from_numpy(np.array([0, 0, 0, 0])).float().to(self.device).view(1, 1, 4)
         time_sd = torch.from_numpy(np.array([50, 7, 15, 15])).float().to(self.device).view(1, 1, 4)
@@ -201,39 +201,39 @@ class DyRepHawkes(torch.nn.Module):
 
             ## 5. Compute  conditional density for all possible pairs
             with torch.no_grad():
-                # z_uv_it = torch.cat((z_prev[u_it].detach().unsqueeze(0).expand(self.num_nodes,-1),
-                #            z_prev[v_it].detach().unsqueeze(0).expand(self.num_nodes, -1)), dim=0)
-                # # two type of events: assoc + comm
-                # if self.hawkes:
-                #     last_t_pred = torch.cat([
-                #         t_bar[it, [u_it, v_it], 0].unsqueeze(1).repeat(1, self.num_nodes).view(-1,1),
-                #         t_bar[it, :, 0].repeat(2).view(-1,1)], dim=1).max(-1)[0]
-                #     ts_diff_pred = t[it].repeat(2*self.num_nodes) - last_t_pred
-                #
-                #     lambda_uv_pred = self.compute_hawkes_lambda(z_uv_it, z_prev.detach().repeat(2,1),
-                #                                                 et_it.repeat(len(z_uv_it)), ts_diff_pred).detach()
-                # else:
-                #     lambda_uv_pred = self.compute_intensity_lambda(z_uv_it, z_prev.detach().repeat(2,1),
-                #                                                    et_it.repeat(len(z_uv_it))).detach()
-                # if not self.training:
-                #     A_pred[it, u_it, :] = lambda_uv_pred[:self.num_nodes]
-                #     A_pred[it, v_it, :] = lambda_uv_pred[self.num_nodes:]
-                #     assert torch.sum(torch.isnan(A_pred[it])) == 0, (it, torch.sum(torch.isnan(A_pred[it])))
-                #     s_u_v = self.compute_cond_density(u_it, v_it, t_bar[it])
-                #     surv[it, [u_it, v_it], :] = s_u_v
-                # time_key = int(t[it])
-                # idx = np.delete(np.arange(self.num_nodes), [u_it, v_it])
-                # idx = np.concatenate((idx, idx+self.num_nodes))
-                # #### if total length reach the limit, remove the oldest one
-                # # TODO: Rename the sequence variable and set the length as a parameter (why 5000)
-                # if len(self.time_keys) >= len(self.Lambda_dict):
-                #     time_keys = np.array(self.time_keys)
-                #     time_keys[:-1] = time_keys[1:]
-                #     self.time_keys = list(time_keys[:-1])
-                #     self.Lambda_dict[:-1] = self.Lambda_dict.clone()[1:]
-                #     self.Lambda_dict[-1] = 0
-                # self.Lambda_dict[len(self.time_keys)] = lambda_uv_pred[idx].sum().detach()
-                # self.time_keys.append(time_key)
+                z_uv_it = torch.cat((z_prev[u_it].detach().unsqueeze(0).expand(self.num_nodes,-1),
+                           z_prev[v_it].detach().unsqueeze(0).expand(self.num_nodes, -1)), dim=0)
+                # two type of events: assoc + comm
+                if self.hawkes:
+                    last_t_pred = torch.cat([
+                        t_bar[it, [u_it, v_it], 0].unsqueeze(1).repeat(1, self.num_nodes).view(-1,1),
+                        t_bar[it, :, 0].repeat(2).view(-1,1)], dim=1).max(-1)[0]
+                    ts_diff_pred = t[it].repeat(2*self.num_nodes) - last_t_pred
+
+                    lambda_uv_pred = self.compute_hawkes_lambda(z_uv_it, z_prev.detach().repeat(2,1),
+                                                                et_it.repeat(len(z_uv_it)), ts_diff_pred).detach()
+                else:
+                    lambda_uv_pred = self.compute_intensity_lambda(z_uv_it, z_prev.detach().repeat(2,1),
+                                                                   et_it.repeat(len(z_uv_it))).detach()
+                if not self.training:
+                    A_pred[it, u_it, :] = lambda_uv_pred[:self.num_nodes]
+                    A_pred[it, v_it, :] = lambda_uv_pred[self.num_nodes:]
+                    assert torch.sum(torch.isnan(A_pred[it])) == 0, (it, torch.sum(torch.isnan(A_pred[it])))
+                    s_u_v = self.compute_cond_density(u_it, v_it, t_bar[it])
+                    surv[it, [u_it, v_it], :] = s_u_v
+                time_key = int(t[it])
+                idx = np.delete(np.arange(self.num_nodes), [u_it, v_it])
+                idx = np.concatenate((idx, idx+self.num_nodes))
+                #### if total length reach the limit, remove the oldest one
+                # TODO: Rename the sequence variable and set the length as a parameter (why 5000)
+                if len(self.time_keys) >= len(self.Lambda_dict):
+                    time_keys = np.array(self.time_keys)
+                    time_keys[:-1] = time_keys[1:]
+                    self.time_keys = list(time_keys[:-1])
+                    self.Lambda_dict[:-1] = self.Lambda_dict.clone()[1:]
+                    self.Lambda_dict[-1] = 0
+                self.Lambda_dict[len(self.time_keys)] = lambda_uv_pred[idx].sum().detach()
+                self.time_keys.append(time_key)
                 # ###############For time prediction
                 if not self.training:
                     t_cur_date = datetime.fromtimestamp(int(t[it]))

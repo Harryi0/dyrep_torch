@@ -36,6 +36,8 @@ path = osp.join(osp.dirname(osp.realpath(__file__)), '.', 'data', 'JODIE')
 dataset = JODIEDataset(path, name='wikipedia')
 data = dataset[0].to(device)
 
+bipartite = True
+
 # Ensure to only sample actual destination nodes as negatives.
 min_dst_idx, max_dst_idx = int(data.dst.min()), int(data.dst.max())
 min_src_idx, max_src_idx = int(data.src.min()), int(data.src.max())
@@ -231,8 +233,8 @@ class DyRepDecoder(torch.nn.Module):
     def hawkes_intensity(self, z_u, z_v, td, symmetric=False):
         z_u = z_u.view(-1, self.embed_dim)
         z_v = z_v.view(-1, self.embed_dim)
-        td_norm = td / train_td_max
-        # td_norm = (td - train_td_mean) / train_td_std
+        # td_norm = td / train_td_max
+        td_norm = (td - train_td_mean) / train_td_std
         if symmetric:
             g_uv = self.omega(torch.cat((z_u, z_v), dim=1)).flatten()
             g_vu = self.omega(torch.cat((z_v, z_u), dim=1)).flatten()
@@ -347,30 +349,30 @@ def train():
 
         src, pos_dst, t, msg = batch.src, batch.dst, batch.t, batch.msg
 
-        ################ Sample negative destination nodes.
-        # neg_dst = torch.randint(min_dst_idx, max_dst_idx + 1, (src.size(0), ),
-        #                         dtype=torch.long, device=device)
-        ################ Sample negative destination nodes all dst
-        # neg_dst_surv = torch.randint(min_dst_idx, max_dst_idx + 1, (src.size(0)*num_surv_samples, ),
-        #                              dtype=torch.long, device=device)
-
-        ################ Sample negative destination nodes from non-happened dst
-        neg_dst_nodes = np.delete(np.arange(min_dst_idx, max_dst_idx + 1), pos_dst.cpu().numpy() - min_dst_idx)
-        neg_dst_surv = torch.tensor(random_state.choice(neg_dst_nodes, size=src.size(0)*num_surv_samples,
-                                                        replace=len(neg_dst_nodes) < src.size(0)*num_surv_samples),
-                                    device=device)
-
-
-
-        ################ Sample negative source nodes all src
-        # neg_src_surv = torch.randint(min_src_idx, max_src_idx + 1, (src.size(0)*num_surv_samples, ),
-        #                              dtype=torch.long, device=device)
-        ################ Sample negative destination nodes from non-happened dst
-        neg_src_nodes = np.delete(np.arange(min_src_idx, max_src_idx + 1), src.cpu().numpy() - min_src_idx)
-        neg_src_surv = torch.tensor(random_state.choice(neg_src_nodes, size=src.size(0)*num_surv_samples,
-                                                replace=len(neg_src_nodes) < src.size(0)*num_surv_samples),
-                                    device=device)
-
+        if bipartite:
+            ################ Sample negative destination nodes all dst
+            # neg_dst_surv = torch.randint(min_dst_idx, max_dst_idx + 1, (src.size(0)*num_surv_samples, ),
+            #                              dtype=torch.long, device=device)
+            ################ Sample negative destination nodes from non-happened dst
+            neg_dst_nodes = np.delete(np.arange(min_dst_idx, max_dst_idx + 1), pos_dst.cpu().numpy() - min_dst_idx)
+            neg_dst_surv = torch.tensor(random_state.choice(neg_dst_nodes, size=src.size(0)*num_surv_samples,
+                                                            replace=len(neg_dst_nodes) < src.size(0)*num_surv_samples),
+                                        device=device)
+            ################ Sample negative source nodes all src
+            # neg_src_surv = torch.randint(min_src_idx, max_src_idx + 1, (src.size(0)*num_surv_samples, ),
+            #                              dtype=torch.long, device=device)
+            ################ Sample negative destination nodes from non-happened dst
+            neg_src_nodes = np.delete(np.arange(min_src_idx, max_src_idx + 1), src.cpu().numpy() - min_src_idx)
+            neg_src_surv = torch.tensor(random_state.choice(neg_src_nodes, size=src.size(0)*num_surv_samples,
+                                                    replace=len(neg_src_nodes) < src.size(0)*num_surv_samples),
+                                        device=device)
+        else:
+            all_neg_nodes = np.delete(np.arange(max_dst_idx+1), np.concatenate([pos_dst.cpu().numpy(), src.cpu().numpy()]))
+            all_neg_surv = torch.tensor(random_state.choice(all_neg_nodes, size=src.size(0)*num_surv_samples*2,
+                                                    replace=len(all_neg_nodes) < src.size(0)*num_surv_samples*2),
+                                        device=device)
+            neg_dst_surv = all_neg_surv[:num_surv_samples]
+            neg_src_surv = all_neg_surv[num_surv_samples:]
 
         # n_id = torch.cat([src, pos_dst, neg_dst]).unique()
         ######### only contained sampled negative
@@ -436,8 +438,8 @@ def test(inference_data, return_time_hr=None):
     for batch_id, batch in enumerate(tqdm(inference_data.seq_batches(batch_size=200), total=119)):
         src, pos_dst, t, msg = batch.src, batch.dst, batch.t, batch.msg
 
-        neg_dst = torch.randint(min_dst_idx, max_dst_idx + 1, (src.size(0), ),
-                                dtype=torch.long, device=device)
+        # neg_dst = torch.randint(min_dst_idx, max_dst_idx + 1, (src.size(0), ),
+        #                         dtype=torch.long, device=device)
 
         # Negative sampling for the survival function
 
@@ -551,7 +553,7 @@ def test(inference_data, return_time_hr=None):
         memory.update_state(src, pos_dst, t, msg)
         neighbor_loader.insert(src, pos_dst)
         return_time_pred = torch.stack(return_time_pred).cpu().numpy()*train_td_hr_std + train_td_hr_mean
-        # return_time_pred = torch.stack(return_time_pred).numpy()
+        # return_time_pred = torch.stack(return_time_pred).cpu().numpy()
         mae = np.mean(abs(return_time_pred - return_time_hr[batch_id*200:(batch_id*200+batch.num_events)]))
         if batch_id % 20 == 0:
             print("Test Batch {}, MAE for time prediction {}, loss {}".format(batch_id+1, mae, loss))
@@ -566,7 +568,8 @@ all_loss, all_loss_lambda, all_loss_surv_u, all_loss_surv_v  = [], [], [], []
 all_val_loss, all_test_loss = [], []
 all_val_ap, all_val_auc, all_test_ap, all_test_auc = [], [], [], []
 all_val_mae, all_test_mae = [], []
-for epoch in range(1, 21): #51
+epochs = 10
+for epoch in range(1, epochs+1): #51
     loss, loss_lambda, loss_surv_u, loss_surv_v = train()
     all_loss.append(loss)
     all_loss_lambda.append(loss_lambda)
@@ -590,26 +593,26 @@ for epoch in range(1, 21): #51
 
 fig = plt.figure(figsize=(12, 5))
 ax = plt.subplot(1,2,1)
-plt.plot(np.arange(1, 21), np.array(all_loss), 'k', label='total loss')
-plt.plot(np.arange(1, 21), np.array(all_loss_lambda), 'r', label='loss events')
-plt.plot(np.arange(1, 21), np.array(all_loss_surv_u), 'b', label='loss nonevents (neg dst)')
-plt.plot(np.arange(1, 21), np.array(all_loss_surv_v), 'g', label='loss nonevents (neg src)')
+plt.plot(np.arange(1, epochs+1), np.array(all_loss), 'k', label='total loss')
+plt.plot(np.arange(1, epochs+1), np.array(all_loss_lambda), 'r', label='loss events')
+plt.plot(np.arange(1, epochs+1), np.array(all_loss_surv_u), 'b', label='loss nonevents (neg dst)')
+plt.plot(np.arange(1, epochs+1), np.array(all_loss_surv_v), 'g', label='loss nonevents (neg src)')
 plt.legend()
 plt.title("TGN + Hawkes, wiki, 4 batches * 5 events")
-ax = plt.subplot(1,2,2)
-plt.plot(np.arange(1,21), np.array(first_batch), 'r')
+plt.subplot(1,2,2)
+plt.plot(np.arange(1,epochs+1), np.array(first_batch), 'r')
 plt.title("TGN+Hawkes, loss for the first batch for each epoch")
 fig.savefig('tgnHawkes_wiki_oneSurv_train.png')
 
 fig2 = plt.figure(figsize=(18, 5))
-ax = plt.subplot(1,3,1)
-plt.plot(np.arange(1, 21), np.array(all_val_loss), 'k', label='total loss')
+plt.subplot(1,3,1)
+plt.plot(np.arange(1, epochs+1), np.array(all_val_loss), 'k', label='total loss')
 plt.title("val loss")
-ax = plt.subplot(1,3,2)
-plt.plot(np.arange(1, 21), np.array(all_val_ap), 'r', label='total loss')
+plt.subplot(1,3,2)
+plt.plot(np.arange(1, epochs+1), np.array(all_val_ap), 'r', label='total loss')
 plt.title("val ap")
-ax = plt.subplot(1,3,3)
-plt.plot(np.arange(1, 21), np.array(all_val_mae), 'b', label='total loss')
+plt.subplot(1,3,3)
+plt.plot(np.arange(1, epochs+1), np.array(all_val_mae), 'b', label='total loss')
 plt.title("val mae")
 fig2.savefig('tgnHawkes_wiki_oneSurv_val.png')
 # fig.savefig('tgnHawkes_20events_twoSurv_lr1e-3.png')
